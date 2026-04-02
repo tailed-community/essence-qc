@@ -1,0 +1,8 @@
+# Essence QC — Prix de l'essence au Québec
+# https://github.com/tailed-community/essence-qc
+
+User-agent: *
+Allow: /
+
+# Sitemap (uncomment and update when deployed)
+# Sitemap: https://your-domain.com/sitemap.xml

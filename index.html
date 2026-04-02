@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fr-CA">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+
+    <!-- Primary SEO -->
+    <title>Essence QC — Prix de l'essence au Québec en temps réel</title>
+    <meta name="description" content="Comparez les prix de l'essence au Québec en temps réel. Carte interactive, liste des stations les moins chères près de vous, planificateur de trajet et mode Costco. Données officielles de la Régie de l'énergie." />
+    <meta name="keywords" content="essence québec, prix essence, gas prices quebec, station essence, prix du gaz, essence pas cher, costco essence, régie énergie québec, prix carburant, essence en temps réel, cheapest gas quebec, fuel prices" />
+    <meta name="author" content="Tailed Community" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="%VITE_SITE_URL%" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="fr_CA" />
+    <meta property="og:site_name" content="Essence QC" />
+    <meta property="og:title" content="Essence QC — Prix de l'essence au Québec en temps réel" />
+    <meta property="og:description" content="Comparez les prix de l'essence au Québec en temps réel. Carte interactive, stations les moins chères, planificateur de trajet et mode Costco." />
+    <meta property="og:url" content="%VITE_SITE_URL%" />
+    <meta property="og:image" content="%VITE_SITE_URL%/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Essence QC — Carte des prix de l'essence au Québec" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Essence QC — Prix de l'essence au Québec en temps réel" />
+    <meta name="twitter:description" content="Comparez les prix de l'essence au Québec en temps réel. Carte interactive, stations les moins chères et planificateur de trajet." />
+    <meta name="twitter:image" content="%VITE_SITE_URL%/og-image.png" />
+    <meta name="twitter:image:alt" content="Essence QC — Carte des prix de l'essence au Québec" />
+
+    <!-- Geo targeting -->
+    <meta name="geo.region" content="CA-QC" />
+    <meta name="geo.placename" content="Québec" />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Essence QC",
+      "alternateName": "Prix Essence Québec",
+      "url": "%VITE_SITE_URL%",
+      "description": "Comparez les prix de l'essence au Québec en temps réel. Carte interactive, liste des stations les moins chères, planificateur de trajet et mode Costco.",
+      "applicationCategory": "UtilitiesApplication",
+      "operatingSystem": "Web",
+      "browserRequirements": "Requires JavaScript",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CAD"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "Tailed Community",
+        "url": "https://github.com/tailed-community"
+      },
+      "inLanguage": "fr-CA",
+      "isAccessibleForFree": true,
+      "contentLocation": {
+        "@type": "AdministrativeArea",
+        "name": "Québec",
+        "containedInPlace": {
+          "@type": "Country",
+          "name": "Canada"
+        }
+      },
+      "screenshot": "%VITE_SITE_URL%/og-image.png",
+      "featureList": [
+        "Prix de l'essence en temps réel",
+        "Carte interactive Google Maps",
+        "Planificateur de trajet",
+        "Mode Costco",
+        "Filtre par type de carburant",
+        "Estimation d'économies"
+      ]
+    }
+    </script>
+
+    <!-- Favicon & Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.svg" />
+
+    <!-- Theme & PWA -->
+    <meta name="theme-color" content="#003DA5" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Essence QC" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
