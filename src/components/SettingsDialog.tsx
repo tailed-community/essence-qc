@@ -1,3 +1,4 @@
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useApp } from "@/store";
 import type { FuelType } from "@/types";
 import {
@@ -16,6 +17,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Home, Trash2, MapPin } from "lucide-react";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -23,7 +25,44 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { prefs, setPrefs } = useApp();
+  const { prefs, setPrefs, clearHomeLocation, setHomeLocation } = useApp();
+  const [showAddressInput, setShowAddressInput] = useState(false);
+  const addressInputRef = useRef<HTMLInputElement>(null);
+
+  // Setup Places Autocomplete on the address input
+  useEffect(() => {
+    if (!showAddressInput || !addressInputRef.current) return;
+    if (typeof google === "undefined" || !google.maps?.places) return;
+
+    const autocomplete = new google.maps.places.Autocomplete(
+      addressInputRef.current,
+      {
+        componentRestrictions: { country: "ca" },
+        fields: ["geometry", "formatted_address"],
+      }
+    );
+
+    autocomplete.addListener("place_changed", () => {
+      const place = autocomplete.getPlace();
+      if (place?.geometry?.location) {
+        setHomeLocation(
+          {
+            lat: place.geometry.location.lat(),
+            lng: place.geometry.location.lng(),
+          },
+          place.formatted_address || ""
+        );
+        setShowAddressInput(false);
+      }
+    });
+
+    // Focus the input once visible
+    addressInputRef.current.focus();
+
+    return () => {
+      google.maps.event.clearInstanceListeners(autocomplete);
+    };
+  }, [showAddressInput, setHomeLocation]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -50,23 +89,60 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </Select>
           </div>
 
-          {/* Radius */}
+          <Separator />
+
+          {/* Home address */}
           <div className="space-y-2">
-            <Label>Rayon de recherche</Label>
-            <Select
-              value={String(prefs.radius)}
-              onValueChange={(v) => setPrefs({ radius: parseInt(v ?? "10", 10) })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="5">5 km</SelectItem>
-                <SelectItem value="10">10 km</SelectItem>
-                <SelectItem value="25">25 km</SelectItem>
-                <SelectItem value="50">50 km</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label className="flex items-center gap-1.5">
+              <Home className="h-3.5 w-3.5" />
+              Adresse de domicile
+            </Label>
+            {prefs.homeAddress ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50 px-3 py-2">
+                  <p className="min-w-0 truncate text-sm text-blue-800">
+                    {prefs.homeAddress}
+                  </p>
+                  <button
+                    onClick={clearHomeLocation}
+                    className="shrink-0 rounded-md p-1.5 text-blue-400 transition-colors hover:bg-blue-100 hover:text-red-500"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <button
+                  onClick={() => setShowAddressInput(true)}
+                  className="text-xs font-medium text-blue-600 hover:underline"
+                >
+                  Modifier l'adresse
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Définissez votre domicile pour centrer automatiquement la
+                  carte à l'ouverture.
+                </p>
+                <button
+                  onClick={() => setShowAddressInput(true)}
+                  className="flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100"
+                >
+                  <MapPin className="h-3.5 w-3.5" />
+                  Ajouter une adresse
+                </button>
+              </div>
+            )}
+            {showAddressInput && (
+              <div className="relative">
+                <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  ref={addressInputRef}
+                  type="text"
+                  placeholder="Entrez votre adresse..."
+                  className="h-9 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-ring focus-visible:ring-2"
+                />
+              </div>
+            )}
           </div>
 
           <Separator />

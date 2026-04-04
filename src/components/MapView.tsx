@@ -4,9 +4,17 @@ import {
   Map as GoogleMap,
   AdvancedMarker,
   InfoWindow,
+  MapControl,
+  ControlPosition,
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
+import {
+  MarkerClusterer,
+  SuperClusterAlgorithm,
+  type ClusterStats,
+  type Marker,
+} from "@googlemaps/markerclusterer";
 import { useApp } from "@/store";
 import { GOOGLE_MAPS_API_KEY, MAP_ID, DEFAULT_ZOOM } from "@/lib/maps-config";
 import { calculateRoute, findStationsAlongRoute } from "@/lib/routing";
@@ -39,12 +47,31 @@ import {
   GripHorizontal,
   Settings2,
   X,
+  Locate,
+  Home,
 } from "lucide-react";
 
 type SheetState = "collapsed" | "peek" | "expanded";
 
+interface SelectedPlace {
+  location: LatLng;
+  address: string;
+}
+
 export function MapView() {
-  const { stations, nearby, userLocation, prefs } = useApp();
+  const {
+    stations,
+    allEnriched,
+    userLocation,
+    effectiveLocation,
+    prefs,
+    geolocationStatus,
+    setHomeLocation,
+    retryGeolocation,
+    setSettingsOpen,
+  } = useApp();
+
+  console.log(`geolocation status: ${geolocationStatus}, userLocation: ${JSON.stringify(userLocation)}, effectiveLocation: ${JSON.stringify(effectiveLocation)} prefs: ${JSON.stringify(prefs)}`);
   const [destination, setDestination] = useState<LatLng | null>(null);
   const [route, setRoute] = useState<OSRMRoute | null>(null);
   const [routeStations, setRouteStations] = useState<RouteStation[]>([]);
@@ -57,18 +84,21 @@ export function MapView() {
     useState<EnrichedStation | null>(null);
   const [sheetState, setSheetState] = useState<SheetState>("collapsed");
   const [showSettings, setShowSettings] = useState(false);
+  const [homeCTA, setHomeCTA] = useState<SelectedPlace | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const recenterRef = useRef<(() => void) | null>(null);
 
   const isRouteMode = route != null;
 
   const doSearch = useCallback(
     async (dest: LatLng) => {
-      if (!userLocation) return;
       setSearching(true);
       setError(null);
       setSelectedNearbyStation(null);
+      setHomeCTA(null);
 
       try {
-        const r = await calculateRoute(userLocation, dest);
+        const r = await calculateRoute(effectiveLocation, dest);
         setRoute(r);
         setDestination(dest);
 
@@ -92,8 +122,22 @@ export function MapView() {
         setSearching(false);
       }
     },
-    [userLocation, stations, prefs.fuelType, autonomyKm]
+    [effectiveLocation, stations, prefs.fuelType, autonomyKm]
   );
+
+  const handlePlaceSelect = useCallback(
+    (loc: LatLng, address: string) => {
+      setHomeCTA({ location: loc, address });
+      doSearch(loc);
+    },
+    [doSearch]
+  );
+
+  const handleSetHome = useCallback(() => {
+    if (!homeCTA) return;
+    setHomeLocation(homeCTA.location, homeCTA.address);
+    setHomeCTA(null);
+  }, [homeCTA, setHomeLocation]);
 
   const clearRoute = useCallback(() => {
     setRoute(null);
@@ -102,11 +146,12 @@ export function MapView() {
     setSelectedRouteStation(null);
     setSheetState("collapsed");
     setError(null);
+    setHomeCTA(null);
   }, []);
 
   // Re-filter when autonomy changes
   useEffect(() => {
-    if (!route || !userLocation) return;
+    if (!route) return;
     const routeCoords = route.geometry.coordinates as [number, number][];
     const routeMeta = { distance: route.distance, duration: route.duration };
     const auto = autonomyKm > 0 ? autonomyKm : null;
@@ -120,7 +165,7 @@ export function MapView() {
       auto
     );
     setRouteStations(found);
-  }, [autonomyKm, route, stations, prefs.fuelType, userLocation]);
+  }, [autonomyKm, route, stations, prefs.fuelType]);
 
   const cycleSheet = useCallback(() => {
     setSheetState((prev) => {
@@ -129,6 +174,13 @@ export function MapView() {
       return "collapsed";
     });
   }, []);
+
+  // Auto-dismiss home CTA after 8 seconds
+  useEffect(() => {
+    if (!homeCTA) return;
+    const timer = setTimeout(() => setHomeCTA(null), 8000);
+    return () => clearTimeout(timer);
+  }, [homeCTA]);
 
   if (!GOOGLE_MAPS_API_KEY) {
     return (
@@ -151,16 +203,17 @@ export function MapView() {
   }
 
   return (
-    <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={["places"]}>
+    <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={["places", "marker"]}>
       <div className="relative h-full w-full">
         {/* ── Full-screen map ──────────────────────── */}
         <div className="absolute inset-0">
           <MapContent
             userLocation={userLocation}
+            effectiveLocation={effectiveLocation}
             destination={destination}
             route={route}
             routeStations={routeStations}
-            nearbyStations={nearby}
+            nearbyStations={allEnriched}
             isRouteMode={isRouteMode}
             selectedRouteStation={selectedRouteStation}
             selectedNearbyStation={selectedNearbyStation}
@@ -178,6 +231,8 @@ export function MapView() {
               setSelectedNearbyStation(null);
             }}
             fuelType={prefs.fuelType}
+            recenterRef={recenterRef}
+            geolocationStatus={geolocationStatus}
           />
         </div>
 
@@ -187,11 +242,56 @@ export function MapView() {
             <div className="rounded-xl bg-white/95 shadow-lg ring-1 ring-black/5 backdrop-blur-sm">
               <div className="p-3">
                 <PlacesAutocompleteInput
-                  onSelect={(loc) => doSearch(loc)}
+                  inputRef={searchInputRef}
+                  onSelect={handlePlaceSelect}
                   searching={searching}
                   onClear={isRouteMode ? clearRoute : undefined}
                 />
               </div>
+
+              {/* Home CTA banner */}
+              {homeCTA && !prefs.homeAddress && (
+                <div className="border-t px-3 py-2">
+                  <button
+                    onClick={handleSetHome}
+                    className="flex w-full items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100"
+                  >
+                    <Home className="h-3.5 w-3.5 shrink-0" />
+                    <span>Définir comme domicile</span>
+                    <span className="ml-auto truncate text-[10px] font-normal text-blue-500">
+                      {homeCTA.address}
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {/* Home chip: address set */}
+              {prefs.homeAddress && !isRouteMode && (
+                <div className="border-t px-3 py-1.5">
+                  <button
+                    onClick={() => recenterRef.current?.()}
+                    className="flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 transition-colors hover:bg-blue-100"
+                  >
+                    <Home className="h-3 w-3" />
+                    <span className="max-w-[200px] truncate">
+                      {prefs.homeAddress}
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {/* Home CTA: no home + geolocation not granted */}
+              {!prefs.homeAddress && geolocationStatus !== "granted" && !isRouteMode && (
+                <div className="border-t px-3 py-1.5">
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="flex items-center gap-1.5 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50/50 px-2.5 py-2 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-50"
+                  >
+                    <Home className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    <span>Définir mon domicile</span>
+                  </button>
+                </div>
+              )}
 
               {/* Settings toggle (autonomy) — only in route mode */}
               {isRouteMode && (
@@ -251,6 +351,13 @@ export function MapView() {
                 ❌ {error}
               </div>
             )}
+
+            {/* Geolocation prompt — inline in floating overlay */}
+            {geolocationStatus !== "granted" &&
+              !prefs.homeLocation &&
+              !isRouteMode && (
+                <GeolocationPrompt onRetry={retryGeolocation} />
+              )}
           </div>
         </div>
 
@@ -265,7 +372,7 @@ export function MapView() {
               route={route}
               routeStations={routeStations}
               autonomyKm={autonomyKm > 0 ? autonomyKm : null}
-              userLocation={userLocation}
+              userLocation={effectiveLocation}
               destination={destination}
               onStationTap={(s) => {
                 setSelectedRouteStation(s);
@@ -382,12 +489,15 @@ function PlacesAutocompleteInput({
   onSelect,
   searching,
   onClear,
+  inputRef: externalRef,
 }: {
-  onSelect: (loc: LatLng) => void;
+  onSelect: (loc: LatLng, address: string) => void;
   searching: boolean;
   onClear?: () => void;
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const internalRef = useRef<HTMLInputElement>(null);
+  const inputRef = externalRef || internalRef;
   const places = useMapsLibrary("places");
 
   useEffect(() => {
@@ -401,10 +511,13 @@ function PlacesAutocompleteInput({
     autocomplete.addListener("place_changed", () => {
       const place = autocomplete.getPlace();
       if (place?.geometry?.location) {
-        onSelect({
-          lat: place.geometry.location.lat(),
-          lng: place.geometry.location.lng(),
-        });
+        onSelect(
+          {
+            lat: place.geometry.location.lat(),
+            lng: place.geometry.location.lng(),
+          },
+          place.formatted_address || ""
+        );
       }
     });
 
@@ -416,7 +529,7 @@ function PlacesAutocompleteInput({
   const handleClear = useCallback(() => {
     if (inputRef.current) inputRef.current.value = "";
     onClear?.();
-  }, [onClear]);
+  }, [onClear, inputRef]);
 
   return (
     <div className="relative">
@@ -424,7 +537,7 @@ function PlacesAutocompleteInput({
       <input
         ref={inputRef}
         type="text"
-        placeholder="Entrez une destination pour planifier un trajet..."
+        placeholder="Rechercher une adresse ou planifier un trajet..."
         className="h-10 w-full rounded-lg border bg-background pl-10 pr-10 text-sm outline-none ring-ring focus-visible:ring-2"
         disabled={searching}
       />
@@ -448,6 +561,7 @@ function PlacesAutocompleteInput({
 
 function MapContent({
   userLocation,
+  effectiveLocation,
   destination,
   route,
   routeStations,
@@ -459,8 +573,11 @@ function MapContent({
   onNearbyStationClick,
   onInfoClose,
   fuelType,
+  recenterRef,
+  geolocationStatus,
 }: {
   userLocation: LatLng | null;
+  effectiveLocation: LatLng;
   destination: LatLng | null;
   route: OSRMRoute | null;
   routeStations: RouteStation[];
@@ -472,13 +589,125 @@ function MapContent({
   onNearbyStationClick: (s: EnrichedStation) => void;
   onInfoClose: () => void;
   fuelType: string;
+  recenterRef: React.MutableRefObject<(() => void) | null>;
+  geolocationStatus: string;
 }) {
+  const map = useMap();
+  const markerLib = useMapsLibrary("marker");
+  const clustererRef = useRef<MarkerClusterer | null>(null);
+  const markersRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement>>(new Map());
+
+  // Expose recenter function to parent
+  useEffect(() => {
+    recenterRef.current = () => {
+      if (map) {
+        map.panTo({ lat: effectiveLocation.lat, lng: effectiveLocation.lng });
+        map.setZoom(DEFAULT_ZOOM);
+      }
+    };
+  }, [map, effectiveLocation, recenterRef]);
+
+  // Create clusterer once
+  useEffect(() => {
+    if (!map || !markerLib) return;
+
+    const renderer = {
+      render({ count, position }: { count: number; position: google.maps.LatLng; markers?: Marker[]; stats?: ClusterStats }) {
+        const el = document.createElement("div");
+        el.className = "cluster-marker";
+        el.style.cssText =
+          "display:flex;align-items:center;justify-content:center;" +
+          "width:40px;height:40px;border-radius:50%;" +
+          "background:#3b82f6;color:white;font-weight:700;" +
+          "font-size:13px;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);" +
+          "cursor:pointer;";
+        el.textContent = count > 99 ? "99+" : String(count);
+
+        return new google.maps.marker.AdvancedMarkerElement({
+          position,
+          content: el,
+          zIndex: count,
+        });
+      },
+    };
+
+    clustererRef.current = new MarkerClusterer({
+      map,
+      markers: [],
+      algorithm: new SuperClusterAlgorithm({ radius: 300, maxZoom: 10 }),
+      renderer,
+    });
+
+    return () => {
+      clustererRef.current?.clearMarkers();
+      clustererRef.current?.setMap(null);
+      clustererRef.current = null;
+    };
+  }, [map, markerLib]);
+
+  // Sync markers with nearbyStations (imperative — no React re-render on pan)
+  useEffect(() => {
+    if (!map || !markerLib || !clustererRef.current || isRouteMode) {
+      // In route mode, clear clustered markers
+      clustererRef.current?.clearMarkers();
+      markersRef.current.clear();
+      return;
+    }
+
+    const nextKeys = new Set<string>();
+    const newMarkers: google.maps.marker.AdvancedMarkerElement[] = [];
+    const existing = markersRef.current;
+
+    for (const station of nearbyStations) {
+      const key = `${station._coords.lat},${station._coords.lng}`;
+      nextKeys.add(key);
+
+      if (existing.has(key)) continue; // already on map, skip
+
+      const costco = isCostco(station);
+      const bgColor = costco ? "#005DAA" : priceColor(station._colorClass);
+      const borderColor = costco ? "#FFD700" : "white";
+
+      const el = document.createElement("div");
+      el.style.cssText =
+        `cursor:pointer;border-radius:9999px;padding:1px 8px;` +
+        `font-size:11px;font-weight:700;color:white;` +
+        `box-shadow:0 1px 4px rgba(0,0,0,0.25);` +
+        `background:${bgColor};border:2px solid ${borderColor};` +
+        `white-space:nowrap;`;
+      el.textContent = formatPrice(station._price);
+
+      const marker = new google.maps.marker.AdvancedMarkerElement({
+        position: { lat: station._coords.lat, lng: station._coords.lng },
+        content: el,
+      });
+
+      marker.addListener("gmp-click", () => onNearbyStationClick(station));
+
+      existing.set(key, marker);
+      newMarkers.push(marker);
+    }
+
+    // Remove old markers no longer in the dataset
+    const toRemove: google.maps.marker.AdvancedMarkerElement[] = [];
+    for (const [key, marker] of existing) {
+      if (!nextKeys.has(key)) {
+        toRemove.push(marker);
+        existing.delete(key);
+      }
+    }
+
+    if (toRemove.length > 0) {
+      clustererRef.current.removeMarkers(toRemove);
+    }
+    if (newMarkers.length > 0) {
+      clustererRef.current.addMarkers(newMarkers);
+    }
+  }, [map, markerLib, nearbyStations, isRouteMode, onNearbyStationClick]);
+
   const center = useMemo(
-    () =>
-      userLocation
-        ? { lat: userLocation.lat, lng: userLocation.lng }
-        : { lat: 45.5017, lng: -73.5673 },
-    [userLocation]
+    () => ({ lat: effectiveLocation.lat, lng: effectiveLocation.lng }),
+    [effectiveLocation]
   );
 
   return (
@@ -549,34 +778,7 @@ function MapContent({
           );
         })}
 
-      {/* ── Nearby station markers (no route) ──── */}
-      {!isRouteMode &&
-        nearbyStations.map((station, i) => {
-          const costco = isCostco(station);
-          const bgColor = costco ? "#005DAA" : priceColor(station._colorClass);
-          const borderColor = costco ? "#FFD700" : "white";
-
-          return (
-            <AdvancedMarker
-              key={`nearby-${station._coords.lat}-${station._coords.lng}-${i}`}
-              position={{
-                lat: station._coords.lat,
-                lng: station._coords.lng,
-              }}
-              onClick={() => onNearbyStationClick(station)}
-            >
-              <div
-                className="cursor-pointer rounded-full px-2 py-0.5 text-[11px] font-bold text-white shadow-md transition-transform hover:scale-110"
-                style={{
-                  backgroundColor: bgColor,
-                  border: `2px solid ${borderColor}`,
-                }}
-              >
-                {formatPrice(station._price)}
-              </div>
-            </AdvancedMarker>
-          );
-        })}
+      {/* Nearby markers are managed imperatively by MarkerClusterer above */}
 
       {/* ── Route station info window ───────────── */}
       {selectedRouteStation && (
@@ -603,7 +805,7 @@ function MapContent({
             <a
               href={
                 destination
-                  ? `https://www.google.com/maps/dir/?api=1&origin=${userLocation ? `${userLocation.lat},${userLocation.lng}` : ""}&destination=${destination.lat},${destination.lng}&waypoints=${selectedRouteStation._coords.lat},${selectedRouteStation._coords.lng}&travelmode=driving`
+                  ? `https://www.google.com/maps/dir/?api=1&origin=${effectiveLocation.lat},${effectiveLocation.lng}&destination=${destination.lat},${destination.lng}&waypoints=${selectedRouteStation._coords.lat},${selectedRouteStation._coords.lng}&travelmode=driving`
                   : `https://www.google.com/maps/dir/?api=1&destination=${selectedRouteStation._coords.lat},${selectedRouteStation._coords.lng}`
               }
               target="_blank"
@@ -683,8 +885,27 @@ function MapContent({
         </InfoWindow>
       )}
 
-      {/* Auto-fit: route bounds or user location */}
-      {route ? <RouteAutoFit route={route} /> : <MapAutoFit />}
+      {/* Auto-fit: route bounds or initial center */}
+      {route ? <RouteAutoFit route={route} /> : <MapAutoFit location={effectiveLocation} />}
+
+      {/* Recenter button — native map control */}
+      {!isRouteMode && (
+        <MapControl position={ControlPosition.RIGHT_BOTTOM}>
+          <button
+            onClick={() => recenterRef.current?.()}
+            className="mb-2 mr-2 flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-lg ring-1 ring-black/10 transition-colors hover:bg-gray-50"
+            title="Recentrer"
+          >
+            <Locate
+              className={`h-5 w-5 ${
+                geolocationStatus === "granted"
+                  ? "text-blue-500"
+                  : "text-gray-400"
+              }`}
+            />
+          </button>
+        </MapControl>
+      )}
     </GoogleMap>
   );
 }
@@ -739,20 +960,38 @@ function RouteAutoFit({ route }: { route: OSRMRoute }) {
   return null;
 }
 
-function MapAutoFit() {
+function MapAutoFit({ location }: { location: LatLng }) {
   const map = useMap();
-  const { userLocation } = useApp();
+  const lastLocation = useRef<LatLng | null>(null);
 
-  const fitBounds = useCallback(() => {
-    if (!map || !userLocation) return;
-    map.panTo({ lat: userLocation.lat, lng: userLocation.lng });
-  }, [map, userLocation]);
-
-  useMemo(() => {
-    fitBounds();
-  }, [fitBounds]);
+  useEffect(() => {
+    if (!map) return;
+    if (lastLocation.current) {
+      // Only recenter if location changed significantly (>1km)
+      const dLat = location.lat - lastLocation.current.lat;
+      const dLng = location.lng - lastLocation.current.lng;
+      const approxKm = Math.sqrt(dLat * dLat + dLng * dLng) * 111;
+      if (approxKm < 1) return;
+    }
+    lastLocation.current = location;
+    map.panTo({ lat: location.lat, lng: location.lng });
+  }, [map, location]);
 
   return null;
+}
+
+/* ─── Geolocation Prompt ─────────────────────────────── */
+
+function GeolocationPrompt({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button
+      onClick={onRetry}
+      className="flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-400 shadow-sm ring-1 ring-blue-100 transition-colors hover:bg-blue-100 hover:text-blue-500"
+    >
+      <Locate className="h-3.5 w-3.5" />
+      Activer la localisation
+    </button>
+  );
 }
 
 /* ─── Route Results List ─────────────────────────────── */

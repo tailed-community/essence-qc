@@ -4,7 +4,6 @@ const STORAGE_KEY = "essence-qc-prefs";
 
 const DEFAULTS: UserPreferences = {
   fuelType: "Régulier",
-  radius: 10,
   costcoMember: false,
   tankSize: 50,
   autonomyKm: 0,

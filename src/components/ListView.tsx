@@ -51,9 +51,9 @@ export function ListView() {
           <div className="flex flex-col items-center justify-center gap-3 p-12 text-center">
             <Search className="h-10 w-10 text-muted-foreground/40" />
             <p className="text-sm text-muted-foreground">
-              Aucune station trouvée dans ce rayon.
+              Aucune station trouvée.
               <br />
-              Essayez d'augmenter le rayon de recherche.
+              Vérifiez votre connexion internet.
             </p>
           </div>
         ) : (

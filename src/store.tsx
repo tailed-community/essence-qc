@@ -4,6 +4,8 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
+  useMemo,
   type ReactNode,
 } from "react";
 import type {
@@ -13,6 +15,7 @@ import type {
   LatLng,
   ViewMode,
   SortMode,
+  GeolocationStatus,
 } from "@/types";
 import { fetchStations } from "@/lib/data";
 import { loadPrefs, savePrefs } from "@/lib/preferences";
@@ -22,12 +25,17 @@ import {
   priceColorClass,
   isCostco,
 } from "@/lib/helpers";
+import { MONTREAL } from "@/lib/maps-config";
+
+const MAX_NEARBY = 200;
 
 interface AppState {
   stations: StationFeature[];
   nearby: EnrichedStation[];
+  allEnriched: EnrichedStation[];
   costcoStations: EnrichedStation[];
   userLocation: LatLng | null;
+  effectiveLocation: LatLng;
   prefs: UserPreferences;
   currentView: ViewMode;
   sortMode: SortMode;
@@ -35,10 +43,16 @@ interface AppState {
   loading: boolean;
   loadingText: string;
   error: string | null;
+  geolocationStatus: GeolocationStatus;
   setPrefs: (prefs: Partial<UserPreferences>) => void;
   setView: (view: ViewMode) => void;
   setSortMode: (mode: SortMode) => void;
   setUserLocation: (loc: LatLng) => void;
+  setHomeLocation: (loc: LatLng, address: string) => void;
+  clearHomeLocation: () => void;
+  retryGeolocation: () => void;
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -58,6 +72,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [loadingText, setLoadingText] = useState("Chargement des prix...");
   const [error, setError] = useState<string | null>(null);
+  const [geolocationStatus, setGeolocationStatus] =
+    useState<GeolocationStatus>("pending");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const watchIdRef = useRef<number | null>(null);
+
+  const effectiveLocation = useMemo(
+    () => userLocation ?? prefs.homeLocation ?? MONTREAL,
+    [userLocation, prefs.homeLocation]
+  );
 
   const setPrefs = useCallback(
     (partial: Partial<UserPreferences>) => {
@@ -74,7 +97,88 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentView(view);
   }, []);
 
-  // Init: fetch data + geolocation
+  const setHomeLocation = useCallback(
+    (loc: LatLng, address: string) => {
+      setPrefs({ homeLocation: loc, homeAddress: address });
+    },
+    [setPrefs]
+  );
+
+  const clearHomeLocation = useCallback(() => {
+    setPrefs({ homeLocation: undefined, homeAddress: undefined });
+  }, [setPrefs]);
+
+  // Start geolocation tracking
+  const startGeolocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setGeolocationStatus("unavailable");
+      return;
+    }
+
+    setGeolocationStatus("pending");
+
+    // Initial position
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setGeolocationStatus("granted");
+      },
+      () => {
+        setGeolocationStatus("denied");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+
+    // Continuous tracking
+    if (watchIdRef.current != null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setGeolocationStatus("granted");
+      },
+      () => {
+        // Keep existing location, just update status if we haven't gotten a fix yet
+      },
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 5000 }
+    );
+  }, []);
+
+  const retryGeolocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setGeolocationStatus("unavailable");
+      return;
+    }
+
+    // Check browser permission state first
+    if (navigator.permissions) {
+      navigator.permissions.query({ name: "geolocation" }).then((result) => {
+        if (result.state === "denied") {
+          // Browser has permanently denied — can't re-prompt
+          setGeolocationStatus("denied");
+          const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
+          const msg = isStandalone
+            ? "La localisation est bloquée.\n\n" +
+              "Pour l'activer :\n" +
+              "Android : Paramètres > Applications > Essence > Autorisations > Position\n" +
+              "iOS : Réglages > Safari > Position"
+            : "La localisation est bloquée par votre navigateur.\n\n" +
+              "Pour l'activer :\n" +
+              "1. Cliquez sur l'icône 🔒 dans la barre d'adresse\n" +
+              "2. Autorisez l'accès à la position";
+          alert(msg);
+          return;
+        }
+        // "prompt" or "granted" — call getCurrentPosition to trigger the browser dialog
+        startGeolocation();
+      });
+    } else {
+      startGeolocation();
+    }
+  }, [startGeolocation]);
+
+  // Init: fetch data (don't block on geolocation)
   useEffect(() => {
     let cancelled = false;
 
@@ -86,33 +190,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         if (cancelled) return;
         setStations(data);
-
-        setLoadingText("Localisation en cours...");
-        const loc = await getUserLocation();
-        if (cancelled) return;
-        setUserLocation(loc);
-
         setLoading(false);
       } catch (err) {
         if (!cancelled) {
-          setError(
-            (err as Error).message || "Erreur de chargement"
-          );
+          setError((err as Error).message || "Erreur de chargement");
           setLoading(false);
         }
       }
     }
 
+    // Start both in parallel — don't await geolocation
     init();
+    startGeolocation();
+
+    // Listen for permission changes (user enables location from browser/OS settings)
+    let permStatus: PermissionStatus | null = null;
+    if (navigator.permissions) {
+      navigator.permissions.query({ name: "geolocation" }).then((status) => {
+        if (cancelled) return;
+        permStatus = status;
+        status.addEventListener("change", () => {
+          if (status.state === "granted") {
+            startGeolocation();
+          } else {
+            setGeolocationStatus(status.state === "denied" ? "denied" : "unavailable");
+          }
+        });
+      });
+    }
+
     return () => {
       cancelled = true;
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      // Clean up permission listener
+      permStatus = null;
     };
-  }, []);
+  }, [startGeolocation]);
 
   // Compute nearby stations
-  const { nearby, avgPrice, costcoStations } = computeNearby(
+  const { nearby, allEnriched, avgPrice, costcoStations } = computeNearby(
     stations,
-    userLocation,
+    effectiveLocation,
     prefs,
     sortMode
   );
@@ -122,8 +243,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         stations,
         nearby,
+        allEnriched,
         costcoStations,
         userLocation,
+        effectiveLocation,
         prefs,
         currentView,
         sortMode,
@@ -131,10 +254,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         loading,
         loadingText,
         error,
+        geolocationStatus,
         setPrefs,
         setView,
         setSortMode,
         setUserLocation,
+        setHomeLocation,
+        clearHomeLocation,
+        retryGeolocation,
+        settingsOpen,
+        setSettingsOpen,
       }}
     >
       {children}
@@ -142,36 +271,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function getUserLocation(): Promise<LatLng> {
-  return new Promise((resolve) => {
-    if (!navigator.geolocation) {
-      resolve({ lat: 45.5017, lng: -73.5673 });
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      },
-      () => {
-        resolve({ lat: 45.5017, lng: -73.5673 });
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  });
-}
-
 function computeNearby(
   stations: StationFeature[],
-  userLocation: LatLng | null,
+  location: LatLng,
   prefs: UserPreferences,
   sortMode: SortMode
 ): {
   nearby: EnrichedStation[];
+  allEnriched: EnrichedStation[];
   avgPrice: number | null;
   costcoStations: EnrichedStation[];
 } {
-  if (!userLocation || stations.length === 0) {
-    return { nearby: [], avgPrice: null, costcoStations: [] };
+  if (stations.length === 0) {
+    return { nearby: [], allEnriched: [], avgPrice: null, costcoStations: [] };
   }
 
   const enriched: EnrichedStation[] = [];
@@ -180,23 +292,23 @@ function computeNearby(
 
   for (const s of stations) {
     const price = getStationPrice(s, prefs.fuelType);
+    if (price == null) continue;
+
     const dist = haversine(
-      userLocation.lat,
-      userLocation.lng,
+      location.lat,
+      location.lng,
       s._coords.lat,
       s._coords.lng
     );
 
-    if (dist <= prefs.radius && price != null) {
-      enriched.push({
-        ...s,
-        _price: price,
-        _distance: dist,
-        _colorClass: "mid",
-      });
-      totalPrice += price;
-      priceCount++;
-    }
+    enriched.push({
+      ...s,
+      _price: price,
+      _distance: dist,
+      _colorClass: "mid",
+    });
+    totalPrice += price;
+    priceCount++;
   }
 
   const avg = priceCount > 0 ? totalPrice / priceCount : null;
@@ -216,6 +328,10 @@ function computeNearby(
     enriched.sort((a, b) => (a._price ?? 999) - (b._price ?? 999));
   }
 
+  // Cap for list performance (map uses full allEnriched)
+  const nearby = enriched.slice(0, MAX_NEARBY);
+  const allEnriched = enriched;
+
   // Costco stations
   const costco: EnrichedStation[] = [];
   if (prefs.costcoMember) {
@@ -223,8 +339,8 @@ function computeNearby(
       if (!isCostco(s)) continue;
       const price = getStationPrice(s, prefs.fuelType);
       const dist = haversine(
-        userLocation.lat,
-        userLocation.lng,
+        location.lat,
+        location.lng,
         s._coords.lat,
         s._coords.lng
       );
@@ -241,5 +357,5 @@ function computeNearby(
     costco.splice(3);
   }
 
-  return { nearby: enriched, avgPrice: avg, costcoStations: costco };
+  return { nearby, allEnriched, avgPrice: avg, costcoStations: costco };
 }

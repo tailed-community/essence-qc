@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useApp } from "@/store";
 import { Header, ViewToggle } from "@/components/Header";
 import { CostcoBanner } from "@/components/CostcoBanner";
@@ -15,8 +14,9 @@ export default function App() {
     error,
     currentView,
     costcoStations,
+    settingsOpen,
+    setSettingsOpen,
   } = useApp();
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   if (loading) {
     return <LoadingScreen text={loadingText} />;

@@ -45,13 +45,15 @@ export interface RouteStation extends StationFeature {
 export type FuelType = "Régulier" | "Super" | "Diesel";
 export type SortMode = "price" | "distance";
 export type ViewMode = "map" | "list";
+export type GeolocationStatus = "pending" | "granted" | "denied" | "unavailable";
 
 export interface UserPreferences {
   fuelType: FuelType;
-  radius: number;
   costcoMember: boolean;
   tankSize: number;
   autonomyKm: number;
+  homeLocation?: LatLng;
+  homeAddress?: string;
 }
 
 export interface LatLng {
