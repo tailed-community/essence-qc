@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useApp } from "@/store";
 import type { FuelType } from "@/types";
 import {

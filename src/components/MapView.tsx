@@ -280,8 +280,8 @@ export function MapView() {
                 </div>
               )}
 
-              {/* Home CTA: no home + geolocation not granted */}
-              {!prefs.homeAddress && geolocationStatus !== "granted" && !isRouteMode && (
+              {/* Home CTA: no home + geolocation denied/unavailable */}
+              {!prefs.homeAddress && (geolocationStatus === "denied" || geolocationStatus === "unavailable") && !isRouteMode && (
                 <div className="border-t px-3 py-1.5">
                   <button
                     onClick={() => setSettingsOpen(true)}
@@ -353,7 +353,7 @@ export function MapView() {
             )}
 
             {/* Geolocation prompt — inline in floating overlay */}
-            {geolocationStatus !== "granted" &&
+            {(geolocationStatus === "denied" || geolocationStatus === "unavailable") &&
               !prefs.homeLocation &&
               !isRouteMode && (
                 <GeolocationPrompt onRetry={retryGeolocation} />
@@ -499,6 +499,8 @@ function PlacesAutocompleteInput({
   const internalRef = useRef<HTMLInputElement>(null);
   const inputRef = externalRef || internalRef;
   const places = useMapsLibrary("places");
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
 
   useEffect(() => {
     if (!places || !inputRef.current) return;
@@ -511,7 +513,7 @@ function PlacesAutocompleteInput({
     autocomplete.addListener("place_changed", () => {
       const place = autocomplete.getPlace();
       if (place?.geometry?.location) {
-        onSelect(
+        onSelectRef.current(
           {
             lat: place.geometry.location.lat(),
             lng: place.geometry.location.lng(),
@@ -524,7 +526,7 @@ function PlacesAutocompleteInput({
     return () => {
       google.maps.event.clearInstanceListeners(autocomplete);
     };
-  }, [places, onSelect]);
+  }, [places]);
 
   const handleClear = useCallback(() => {
     if (inputRef.current) inputRef.current.value = "";
@@ -634,7 +636,7 @@ function MapContent({
     clustererRef.current = new MarkerClusterer({
       map,
       markers: [],
-      algorithm: new SuperClusterAlgorithm({ radius: 300, maxZoom: 10 }),
+      algorithm: new SuperClusterAlgorithm({ radius: 300, maxZoom: 12 }),
       renderer,
     });
 

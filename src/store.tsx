@@ -204,11 +204,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     startGeolocation();
 
     // Listen for permission changes (user enables location from browser/OS settings)
-    let permStatus: PermissionStatus | null = null;
     if (navigator.permissions) {
       navigator.permissions.query({ name: "geolocation" }).then((status) => {
         if (cancelled) return;
-        permStatus = status;
         status.addEventListener("change", () => {
           if (status.state === "granted") {
             startGeolocation();
@@ -225,8 +223,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
-      // Clean up permission listener
-      permStatus = null;
     };
   }, [startGeolocation]);
 
