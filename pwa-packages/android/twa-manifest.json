@@ -1,0 +1,62 @@
+{
+  "packageId": "com.tailedcommunity.essenceqc",
+  "host": "essence-qc-19129.web.app",
+  "name": "Essence QC — Prix de l'essence au Québec en temps réel",
+  "launcherName": "Essence QC",
+  "display": "standalone",
+  "themeColor": "#003DA5",
+  "themeColorDark": "#000000",
+  "navigationColor": "#000000",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#003DA5",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://essence-qc-19129.web.app/icon-512.png",
+  "maskableIconUrl": "https://essence-qc-19129.web.app/icon-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "essenceqc"
+  },
+  "appVersionName": "2.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "Carte des stations",
+      "shortName": "Carte",
+      "url": "https://essence-qc-19129.web.app/?view=map",
+      "chosenIconUrl": "https://essence-qc-19129.web.app/icon-192.png"
+    },
+    {
+      "name": "Liste des prix",
+      "shortName": "Liste",
+      "url": "https://essence-qc-19129.web.app/?view=list",
+      "chosenIconUrl": "https://essence-qc-19129.web.app/icon-192.png"
+    }
+  ],
+  "generatorApp": "unknown",
+  "webManifestUrl": "https://essence-qc-19129.web.app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://essence-qc-19129.web.app/",
+  "minSdkVersion": 21,
+  "orientation": "portrait-primary",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [],
+  "launchHandlerClientMode": "navigate-existing",
+  "displayOverride": [
+    "standalone"
+  ],
+  "appVersion": "2.0.0"
+}

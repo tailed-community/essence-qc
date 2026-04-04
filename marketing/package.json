@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "screenshots": "node capture-screenshots.js",
+    "app-screens": "node capture-app-screens.js",
     "studio": "npx remotion studio src/index.tsx",
     "render": "npx remotion render src/index.tsx PromoVideo out/promo-portrait.mp4",
     "render:wide": "npx remotion render src/index.tsx PromoVideoWide out/promo-landscape.mp4",
@@ -16,6 +17,7 @@
   "type": "commonjs",
   "dependencies": {
     "@remotion/cli": "^4.0.443",
+    "@remotion/gif": "^4.0.443",
     "@remotion/renderer": "^4.0.443",
     "@types/react": "^19.2.14",
     "puppeteer": "^24.40.0",

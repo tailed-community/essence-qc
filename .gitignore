@@ -28,6 +28,19 @@ dist-ssr
 # Firebase
 .firebase/
 
+# Android build (Bubblewrap TWA)
+pwa-packages/android/*.keystore
+pwa-packages/android/app/build/
+pwa-packages/android/build/
+pwa-packages/android/.gradle/
+pwa-packages/android/local.properties
+
+# Gradle cache
+.gradle/
+
 # Marketing build outputs
 marketing/out/
 marketing/node_modules/
+
+# Marketing recordings (large binary files)
+marketing/public/recordings/
