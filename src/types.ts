@@ -30,6 +30,7 @@ export interface EnrichedStation extends StationFeature {
   _price: number | null;
   _distance: number;
   _colorClass: "cheap" | "mid" | "expensive";
+  _blacklisted?: boolean;
 }
 
 export interface RouteStation extends StationFeature {
@@ -40,6 +41,7 @@ export interface RouteStation extends StationFeature {
   _detourMinutes: number;
   _segment: number;
   _segmentLabel: string;
+  _blacklisted?: boolean;
 }
 
 export type FuelType = "Régulier" | "Super" | "Diesel";

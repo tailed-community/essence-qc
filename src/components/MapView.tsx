@@ -19,7 +19,7 @@ import { useApp } from "@/store";
 import { GOOGLE_MAPS_API_KEY, MAP_ID, DEFAULT_ZOOM } from "@/lib/maps-config";
 import { calculateRoute, findStationsAlongRoute } from "@/lib/routing";
 import type { OSRMRoute } from "@/lib/routing";
-import type { EnrichedStation, RouteStation, LatLng } from "@/types";
+import type { EnrichedStation, RouteStation, LatLng, SortMode } from "@/types";
 import {
   formatPrice,
   formatDistance,
@@ -27,10 +27,20 @@ import {
   priceColor,
   isCostco,
   priceColorClass,
+  calcSavings,
+  calcNetSavings,
 } from "@/lib/helpers";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
+import { StationDetailDialog } from "@/components/StationDetailDialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Search,
   MapPin,
@@ -49,7 +59,9 @@ import {
   X,
   Locate,
   Home,
+  AlertTriangle,
 } from "lucide-react";
+
 
 type SheetState = "collapsed" | "peek" | "expanded";
 
@@ -62,13 +74,20 @@ export function MapView() {
   const {
     stations,
     allEnriched,
+    nearby,
+    avgPrice,
     userLocation,
     effectiveLocation,
     prefs,
+    sortMode,
+    setSortMode,
     geolocationStatus,
     setHomeLocation,
     retryGeolocation,
     setSettingsOpen,
+    blacklist,
+    toggleBlacklist,
+    isBlacklisted,
   } = useApp();
 
   console.log(`geolocation status: ${geolocationStatus}, userLocation: ${JSON.stringify(userLocation)}, effectiveLocation: ${JSON.stringify(effectiveLocation)} prefs: ${JSON.stringify(prefs)}`);
@@ -83,8 +102,11 @@ export function MapView() {
   const [selectedNearbyStation, setSelectedNearbyStation] =
     useState<EnrichedStation | null>(null);
   const [sheetState, setSheetState] = useState<SheetState>("collapsed");
+  const [nearbySheetState, setNearbySheetState] = useState<SheetState>("collapsed");
+  const [nearbyDetailStation, setNearbyDetailStation] = useState<EnrichedStation | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [homeCTA, setHomeCTA] = useState<SelectedPlace | null>(null);
+  const [viewportBounds, setViewportBounds] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const recenterRef = useRef<(() => void) | null>(null);
 
@@ -114,6 +136,10 @@ export function MapView() {
           routeMeta,
           auto
         );
+        // Mark blacklisted route stations
+        for (const s of found) {
+          s._blacklisted = isBlacklisted(s._coords.lat, s._coords.lng);
+        }
         setRouteStations(found);
         setSheetState("peek");
       } catch (err) {
@@ -149,7 +175,7 @@ export function MapView() {
     setHomeCTA(null);
   }, []);
 
-  // Re-filter when autonomy changes
+  // Re-filter when autonomy or blacklist changes
   useEffect(() => {
     if (!route) return;
     const routeCoords = route.geometry.coordinates as [number, number][];
@@ -164,11 +190,22 @@ export function MapView() {
       routeMeta,
       auto
     );
+    for (const s of found) {
+      s._blacklisted = isBlacklisted(s._coords.lat, s._coords.lng);
+    }
     setRouteStations(found);
-  }, [autonomyKm, route, stations, prefs.fuelType]);
+  }, [autonomyKm, route, stations, prefs.fuelType, blacklist]);
 
   const cycleSheet = useCallback(() => {
     setSheetState((prev) => {
+      if (prev === "collapsed") return "peek";
+      if (prev === "peek") return "expanded";
+      return "collapsed";
+    });
+  }, []);
+
+  const cycleNearbySheet = useCallback(() => {
+    setNearbySheetState((prev) => {
       if (prev === "collapsed") return "peek";
       if (prev === "peek") return "expanded";
       return "collapsed";
@@ -233,6 +270,7 @@ export function MapView() {
             fuelType={prefs.fuelType}
             recenterRef={recenterRef}
             geolocationStatus={geolocationStatus}
+            onViewportChange={setViewportBounds}
           />
         </div>
 
@@ -382,6 +420,46 @@ export function MapView() {
             />
           </BottomSheet>
         )}
+
+        {/* ── Bottom sheet (nearby stations list) ─────────── */}
+        {!isRouteMode && (
+          <BottomSheet
+            state={nearbySheetState}
+            onCycle={cycleNearbySheet}
+            onChangeState={setNearbySheetState}
+          >
+            <NearbyStationsList
+              stations={viewportBounds
+                ? nearby.filter((s) =>
+                    s._coords.lat >= viewportBounds.south &&
+                    s._coords.lat <= viewportBounds.north &&
+                    s._coords.lng >= viewportBounds.west &&
+                    s._coords.lng <= viewportBounds.east
+                  )
+                : nearby}
+              avgPrice={avgPrice}
+              tankSize={prefs.tankSize}
+              sortMode={sortMode}
+              onSortChange={setSortMode}
+              onStationTap={(s) => {
+                setNearbyDetailStation(s);
+              }}
+            />
+          </BottomSheet>
+        )}
+
+        {/* Station detail dialog (nearby sheet) */}
+        <StationDetailDialog
+          station={nearbyDetailStation}
+          fuelType={prefs.fuelType}
+          avgPrice={avgPrice}
+          tankSize={prefs.tankSize}
+          onOpenChange={(open) => {
+            if (!open) setNearbyDetailStation(null);
+          }}
+          onToggleBlacklist={toggleBlacklist}
+          isBlacklisted={isBlacklisted}
+        />
       </div>
     </APIProvider>
   );
@@ -577,6 +655,7 @@ function MapContent({
   fuelType,
   recenterRef,
   geolocationStatus,
+  onViewportChange,
 }: {
   userLocation: LatLng | null;
   effectiveLocation: LatLng;
@@ -593,11 +672,80 @@ function MapContent({
   fuelType: string;
   recenterRef: React.MutableRefObject<(() => void) | null>;
   geolocationStatus: string;
+  onViewportChange?: (bounds: { north: number; south: number; east: number; west: number }) => void;
 }) {
   const map = useMap();
   const markerLib = useMapsLibrary("marker");
   const clustererRef = useRef<MarkerClusterer | null>(null);
   const markersRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement>>(new Map());
+  const stationByKeyRef = useRef<Map<string, EnrichedStation>>(new Map());
+  const [viewportBounds, setViewportBounds] = useState<google.maps.LatLngBounds | null>(null);
+
+  // Track viewport bounds for viewport-based color coding
+  useEffect(() => {
+    if (!map) return;
+    const listener = map.addListener("idle", () => {
+      const bounds = map.getBounds();
+      if (bounds) {
+        setViewportBounds(bounds);
+        onViewportChange?.({
+          north: bounds.getNorthEast().lat(),
+          south: bounds.getSouthWest().lat(),
+          east: bounds.getNorthEast().lng(),
+          west: bounds.getSouthWest().lng(),
+        });
+      }
+    });
+    return () => google.maps.event.removeListener(listener);
+  }, [map]);
+
+  // Recolor markers based on viewport-visible stations
+  useEffect(() => {
+    if (!viewportBounds || isRouteMode || markersRef.current.size === 0) return;
+
+    // Find min/max price among visible non-blacklisted stations
+    const visiblePrices: number[] = [];
+    for (const [, station] of stationByKeyRef.current) {
+      if (station._price == null || station._blacklisted) continue;
+      const pos = { lat: station._coords.lat, lng: station._coords.lng };
+      if (viewportBounds.contains(pos)) {
+        visiblePrices.push(station._price);
+      }
+    }
+
+    if (visiblePrices.length === 0) return;
+
+    const minP = Math.min(...visiblePrices);
+    const maxP = Math.max(...visiblePrices);
+
+    // Update marker colors based on viewport-local percentiles
+    for (const [mKey, station] of stationByKeyRef.current) {
+      const marker = markersRef.current.get(mKey);
+      if (!marker || station._price == null) continue;
+
+      const costco = isCostco(station);
+      let bgColor: string;
+      let borderColor: string;
+
+      if (station._blacklisted) {
+        bgColor = "#374151"; // dark gray
+        borderColor = "#f59e0b"; // amber warning border
+      } else if (costco) {
+        bgColor = "#005DAA";
+        borderColor = "#FFD700";
+      } else {
+        const localColorClass = priceColorClass(station._price, minP, maxP);
+        bgColor = priceColor(localColorClass);
+        borderColor = "white";
+      }
+
+      const el = marker.content as HTMLElement;
+      if (el) {
+        el.style.background = bgColor;
+        el.style.borderColor = borderColor;
+      }
+    }
+  }, [viewportBounds, isRouteMode]);
 
   // Expose recenter function to parent
   useEffect(() => {
@@ -648,12 +796,41 @@ function MapContent({
   }, [map, markerLib]);
 
   // Sync markers with nearbyStations (imperative — no React re-render on pan)
+  // We track a "data version" to detect when we need to fully rebuild
+  // (e.g. fuel type change causes new prices on existing markers)
+  const prevStationsRef = useRef<EnrichedStation[]>([]);
+
   useEffect(() => {
     if (!map || !markerLib || !clustererRef.current || isRouteMode) {
       // In route mode, clear clustered markers
       clustererRef.current?.clearMarkers();
       markersRef.current.clear();
       return;
+    }
+
+    // Detect if prices changed (fuel type switch, data refresh) by checking
+    // if any existing marker's station has a different price now
+    let needsFullRebuild = false;
+    if (prevStationsRef.current.length > 0 && nearbyStations.length > 0) {
+      const oldByKey = new Map(
+        prevStationsRef.current.map((s) => [`${s._coords.lat},${s._coords.lng}`, s])
+      );
+      for (const station of nearbyStations) {
+        const key = `${station._coords.lat},${station._coords.lng}`;
+        const old = oldByKey.get(key);
+        if (old && (old._price !== station._price || old._colorClass !== station._colorClass || old._blacklisted !== station._blacklisted)) {
+          needsFullRebuild = true;
+          break;
+        }
+      }
+    }
+    prevStationsRef.current = nearbyStations;
+
+    if (needsFullRebuild) {
+      // Clear all existing markers and rebuild from scratch
+      clustererRef.current.clearMarkers();
+      markersRef.current.clear();
+      stationByKeyRef.current.clear();
     }
 
     const nextKeys = new Set<string>();
@@ -663,12 +840,24 @@ function MapContent({
     for (const station of nearbyStations) {
       const key = `${station._coords.lat},${station._coords.lng}`;
       nextKeys.add(key);
+      stationByKeyRef.current.set(key, station);
 
       if (existing.has(key)) continue; // already on map, skip
 
       const costco = isCostco(station);
-      const bgColor = costco ? "#005DAA" : priceColor(station._colorClass);
-      const borderColor = costco ? "#FFD700" : "white";
+      let bgColor: string;
+      let borderColor: string;
+
+      if (station._blacklisted) {
+        bgColor = "#374151";
+        borderColor = "#f59e0b";
+      } else if (costco) {
+        bgColor = "#005DAA";
+        borderColor = "#FFD700";
+      } else {
+        bgColor = priceColor(station._colorClass);
+        borderColor = "white";
+      }
 
       const el = document.createElement("div");
       el.style.cssText =
@@ -677,7 +866,9 @@ function MapContent({
         `box-shadow:0 1px 4px rgba(0,0,0,0.25);` +
         `background:${bgColor};border:2px solid ${borderColor};` +
         `white-space:nowrap;`;
-      el.textContent = formatPrice(station._price);
+      el.textContent = station._blacklisted
+        ? `⚠️ ${formatPrice(station._price)}`
+        : formatPrice(station._price);
 
       const marker = new google.maps.marker.AdvancedMarkerElement({
         position: { lat: station._coords.lat, lng: station._coords.lng },
@@ -696,6 +887,7 @@ function MapContent({
       if (!nextKeys.has(key)) {
         toRemove.push(marker);
         existing.delete(key);
+        stationByKeyRef.current.delete(key);
       }
     }
 
@@ -753,13 +945,25 @@ function MapContent({
       {isRouteMode &&
         routeStations.map((s, i) => {
           const costco = isCostco(s);
-          const colorCls = priceColorClass(
-            s._price,
-            Math.min(...routeStations.map((x) => x._price)),
-            Math.max(...routeStations.map((x) => x._price))
-          );
-          const bgColor = costco ? "#005DAA" : priceColor(colorCls);
-          const borderColor = costco ? "#FFD700" : "white";
+          const nonBlacklistedPrices = routeStations
+            .filter((x) => !x._blacklisted)
+            .map((x) => x._price);
+          const rMinP = nonBlacklistedPrices.length > 0 ? Math.min(...nonBlacklistedPrices) : s._price;
+          const rMaxP = nonBlacklistedPrices.length > 0 ? Math.max(...nonBlacklistedPrices) : s._price;
+          const colorCls = priceColorClass(s._price, rMinP, rMaxP);
+
+          let bgColor: string;
+          let borderColor: string;
+          if (s._blacklisted) {
+            bgColor = "#374151";
+            borderColor = "#f59e0b";
+          } else if (costco) {
+            bgColor = "#005DAA";
+            borderColor = "#FFD700";
+          } else {
+            bgColor = priceColor(colorCls);
+            borderColor = "white";
+          }
 
           return (
             <AdvancedMarker
@@ -774,7 +978,7 @@ function MapContent({
                   border: `2px solid ${borderColor}`,
                 }}
               >
-                {formatPrice(s._price)}
+                {s._blacklisted ? `⚠️ ${formatPrice(s._price)}` : formatPrice(s._price)}
               </div>
             </AdvancedMarker>
           );
@@ -1016,18 +1220,20 @@ function RouteResults({
   const distKm = Math.round(route.distance / 1000);
   const durMin = Math.round(route.duration / 60);
 
+  const nonBlacklisted = routeStations.filter((s) => !s._blacklisted);
+
   const cheapestPrice =
-    routeStations.length > 0
-      ? Math.min(...routeStations.map((s) => s._price))
+    nonBlacklisted.length > 0
+      ? Math.min(...nonBlacklisted.map((s) => s._price))
       : null;
 
-  const bestStation = routeStations.find((s) => s._price === cheapestPrice);
+  const bestStation = nonBlacklisted.find((s) => s._price === cheapestPrice);
   const gmapsTripUrl =
     userLocation && destination
       ? `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${destination.lat},${destination.lng}${bestStation ? `&waypoints=${bestStation._coords.lat},${bestStation._coords.lng}` : ""}&travelmode=driving`
       : null;
 
-  const recommended = [...routeStations]
+  const recommended = [...nonBlacklisted]
     .sort((a, b) => {
       const scoreA = a._price + a._detourMinutes * 2;
       const scoreB = b._price + b._detourMinutes * 2;
@@ -1039,9 +1245,9 @@ function RouteResults({
     recommended.map((s) => `${s._coords.lat}-${s._coords.lng}`)
   );
 
-  const prices = routeStations.map((st) => st._price);
-  const minP = routeStations.length > 0 ? Math.min(...prices) : 0;
-  const maxP = routeStations.length > 0 ? Math.max(...prices) : 0;
+  const nonBlacklistedPrices = nonBlacklisted.map((st) => st._price);
+  const minP = nonBlacklistedPrices.length > 0 ? Math.min(...nonBlacklistedPrices) : 0;
+  const maxP = nonBlacklistedPrices.length > 0 ? Math.max(...nonBlacklistedPrices) : 0;
 
   return (
     <div className="space-y-2 px-3 pb-6 pt-1">
@@ -1140,7 +1346,9 @@ function RouteResults({
 
               const badgeBg = costco
                 ? "bg-[#005DAA]"
-                : priceColorMap[colorClass] || "bg-amber-500";
+                : s._blacklisted
+                  ? "bg-gray-700"
+                  : priceColorMap[colorClass] || "bg-amber-500";
 
               const navUrl = destination
                 ? `https://www.google.com/maps/dir/?api=1&origin=${userLocation ? `${userLocation.lat},${userLocation.lng}` : ""}&destination=${destination.lat},${destination.lng}&waypoints=${s._coords.lat},${s._coords.lng}&travelmode=driving`
@@ -1152,11 +1360,14 @@ function RouteResults({
                   onClick={() => onStationTap(s)}
                   className={`flex cursor-pointer items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition-shadow hover:shadow-md ${
                     costco ? "border-blue-200 ring-1 ring-blue-100" : ""
-                  } ${isBest ? "ring-2 ring-blue-200" : ""} ${isRecommended ? "border-blue-100" : ""}`}
+                  } ${isBest ? "ring-2 ring-blue-200" : ""} ${isRecommended ? "border-blue-100" : ""} ${s._blacklisted ? "border-amber-300 bg-amber-50/30" : ""}`}
                 >
                   <div
                     className={`flex shrink-0 flex-col items-center rounded-xl px-3 py-2 text-white ${badgeBg}`}
                   >
+                    {s._blacklisted && (
+                      <span className="text-xs">⚠️</span>
+                    )}
                     <span className="text-lg font-extrabold leading-tight">
                       {s._price.toFixed(1)}
                     </span>
@@ -1168,7 +1379,13 @@ function RouteResults({
                   <div className="min-w-0 flex-1 space-y-1">
                     <p className="truncate text-sm font-semibold">
                       {s.properties.Name}
-                      {isBest && (
+                      {s._blacklisted && (
+                        <Badge variant="outline" className="ml-1.5 border-amber-400 text-[10px] text-amber-700">
+                          <AlertTriangle className="mr-0.5 h-2.5 w-2.5" />
+                          Périmé
+                        </Badge>
+                      )}
+                      {isBest && !s._blacklisted && (
                         <Badge
                           variant="default"
                           className="ml-1.5 bg-blue-600 text-[10px]"
@@ -1221,6 +1438,167 @@ function RouteResults({
               );
             })}
         </>
+      )}
+    </div>
+  );
+}
+
+/* ─── Nearby Stations List (bottom sheet content) ────── */
+
+function NearbyStationsList({
+  stations,
+  avgPrice,
+  tankSize,
+  sortMode,
+  onSortChange,
+  onStationTap,
+}: {
+  stations: EnrichedStation[];
+  avgPrice: number | null;
+  tankSize: number;
+  sortMode: SortMode;
+  onSortChange: (mode: SortMode) => void;
+  onStationTap: (s: EnrichedStation) => void;
+}) {
+  return (
+    <div className="space-y-0 pb-6">
+      {/* Controls */}
+      <div className="flex items-center justify-between border-b bg-white px-4 py-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          {stations.length} station{stations.length !== 1 ? "s" : ""}
+        </span>
+        <Select
+          value={sortMode}
+          onValueChange={(v) => onSortChange(v as SortMode)}
+        >
+          <SelectTrigger className="h-7 w-[130px] text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="price">💰 Prix</SelectItem>
+            <SelectItem value="distance">📍 Distance</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {stations.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
+          <Search className="h-8 w-8 text-muted-foreground/40" />
+          <p className="text-xs text-muted-foreground">
+            Aucune station trouvée.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2 p-3">
+          {stations.map((station, i) => {
+            const props = station.properties;
+            const costco = isCostco(station);
+            const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${station._coords.lat},${station._coords.lng}`;
+
+            const savings =
+              station._price != null && avgPrice != null
+                ? calcSavings(station._price, avgPrice, tankSize)
+                : null;
+
+            const netSavings =
+              station._price != null && avgPrice != null
+                ? calcNetSavings(station._price, avgPrice, tankSize, station._distance)
+                : null;
+
+            const isFar = station._distance > 15;
+
+            const priceColorMap: Record<string, string> = {
+              cheap: "bg-emerald-500",
+              mid: "bg-amber-500",
+              expensive: "bg-red-500",
+            };
+
+            const badgeBg = costco
+              ? "bg-[#005DAA]"
+              : station._blacklisted
+                ? "bg-gray-700"
+                : priceColorMap[station._colorClass] || "bg-amber-500";
+
+            return (
+              <div
+                key={`${station._coords.lat}-${station._coords.lng}-${i}`}
+                onClick={() => onStationTap(station)}
+                className={`flex cursor-pointer items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition-shadow hover:shadow-md ${
+                  costco ? "border-blue-200 ring-1 ring-blue-100" : ""
+                } ${station._blacklisted ? "border-amber-300 bg-amber-50/30" : ""}`}
+              >
+                {/* Price badge */}
+                <div
+                  className={`flex shrink-0 flex-col items-center rounded-xl px-3 py-2 text-white ${badgeBg}`}
+                >
+                  {station._blacklisted && (
+                    <span className="text-xs">⚠️</span>
+                  )}
+                  <span className="text-lg font-extrabold leading-tight">
+                    {station._price != null ? station._price.toFixed(1) : "N/D"}
+                  </span>
+                  <span className="text-[10px] font-medium opacity-90">¢/L</span>
+                </div>
+
+                {/* Info */}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{props.Name}</p>
+                  {station._blacklisted && (
+                    <Badge variant="outline" className="text-[10px] border-amber-400 text-amber-700 bg-amber-50">
+                      <AlertTriangle className="mr-0.5 h-2.5 w-2.5" />
+                      Prix potentiellement périmé
+                    </Badge>
+                  )}
+                  {props.brand && (
+                    <p className="truncate text-xs text-muted-foreground">
+                      {props.brand}
+                    </p>
+                  )}
+                  <p className="truncate text-xs text-muted-foreground">
+                    {props.Address || ""}
+                  </p>
+                  {savings !== null && Math.abs(savings) >= 0.25 && (
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <Badge
+                        variant={savings > 0 ? "default" : "destructive"}
+                        className="text-[10px]"
+                      >
+                        {savings > 0
+                          ? `Économie ${savings.toFixed(2)}$/plein`
+                          : `+${Math.abs(savings).toFixed(2)}$/plein`}
+                      </Badge>
+                      {isFar && netSavings !== null && netSavings < savings && (
+                        <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700">
+                          <AlertTriangle className="mr-0.5 h-2.5 w-2.5" />
+                          Net {netSavings > 0 ? `${netSavings.toFixed(2)}$` : "négatif"} après déplacement
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Meta */}
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <MapPin className="h-3 w-3" />
+                    {station._distance != null
+                      ? formatDistance(station._distance)
+                      : ""}
+                  </span>
+                  <a
+                    href={navUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-blue-600 transition-colors hover:bg-blue-200"
+                  >
+                    <Navigation className="h-3.5 w-3.5" />
+                  </a>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

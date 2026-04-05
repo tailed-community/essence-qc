@@ -1,4 +1,4 @@
-import { Map, List, Settings } from "lucide-react";
+import { Settings } from "lucide-react";
 import { useApp } from "@/store";
 import type { FuelType } from "@/types";
 import {
@@ -68,38 +68,5 @@ export function Header({ onOpenSettings }: HeaderProps) {
         </Button>
       </div>
     </header>
-  );
-}
-
-export function ViewToggle() {
-  const { currentView, setView } = useApp();
-
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">
-      <div className="pointer-events-auto flex overflow-hidden rounded-full bg-white/95 shadow-lg ring-1 ring-black/10 backdrop-blur-sm">
-        <button
-          onClick={() => setView("map")}
-          className={`flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold transition-colors ${
-            currentView === "map"
-              ? "bg-[#003DA5] text-white"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Map className="h-4 w-4" />
-          Carte
-        </button>
-        <button
-          onClick={() => setView("list")}
-          className={`flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold transition-colors ${
-            currentView === "list"
-              ? "bg-[#003DA5] text-white"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <List className="h-4 w-4" />
-          Liste
-        </button>
-      </div>
-    </div>
   );
 }

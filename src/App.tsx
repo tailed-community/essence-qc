@@ -1,8 +1,7 @@
 import { useApp } from "@/store";
-import { Header, ViewToggle } from "@/components/Header";
+import { Header } from "@/components/Header";
 import { CostcoBanner } from "@/components/CostcoBanner";
 import { MapView } from "@/components/MapView";
-import { ListView } from "@/components/ListView";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { AlertCircle } from "lucide-react";
@@ -12,7 +11,6 @@ export default function App() {
     loading,
     loadingText,
     error,
-    currentView,
     costcoStations,
     settingsOpen,
     setSettingsOpen,
@@ -47,21 +45,12 @@ export default function App() {
         </span>
       </div>
 
-      {/* Content area */}
+      {/* Content area — full-screen map with integrated bottom sheet */}
       <main className="relative flex-1 overflow-hidden">
-        <div
-          className={`absolute inset-0 ${currentView === "map" ? "" : "hidden"}`}
-        >
+        <div className="absolute inset-0">
           <MapView />
         </div>
-        <div
-          className={`absolute inset-0 ${currentView === "list" ? "" : "hidden"}`}
-        >
-          <ListView />
-        </div>
       </main>
-
-      <ViewToggle />
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>

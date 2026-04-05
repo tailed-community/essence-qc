@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Navigation, MapPin } from "lucide-react";
+import { Navigation, MapPin, AlertTriangle, ShieldCheck } from "lucide-react";
 
 interface StationDetailDialogProps {
   station: EnrichedStation | null;
@@ -16,6 +16,8 @@ interface StationDetailDialogProps {
   avgPrice: number | null;
   tankSize: number;
   onOpenChange: (open: boolean) => void;
+  onToggleBlacklist?: (lat: number, lng: number) => void;
+  isBlacklisted?: (lat: number, lng: number) => boolean;
 }
 
 export function StationDetailDialog({
@@ -24,12 +26,15 @@ export function StationDetailDialog({
   avgPrice,
   tankSize,
   onOpenChange,
+  onToggleBlacklist,
+  isBlacklisted,
 }: StationDetailDialogProps) {
   if (!station) return null;
 
   const props = station.properties;
   const prices = props.Prices || [];
   const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${station._coords.lat},${station._coords.lng}`;
+  const blacklisted = isBlacklisted?.(station._coords.lat, station._coords.lng) ?? false;
 
   const savings =
     station._price != null && avgPrice != null
@@ -45,6 +50,13 @@ export function StationDetailDialog({
         <div className="space-y-4 pt-1">
           {props.brand && (
             <p className="text-sm text-muted-foreground">{props.brand}</p>
+          )}
+
+          {blacklisted && (
+            <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-amber-200">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span className="font-medium">Prix potentiellement périmé</span>
+            </div>
           )}
 
           {station._distance != null && (
@@ -107,6 +119,30 @@ export function StationDetailDialog({
             <Navigation className="h-4 w-4" />
             Itinéraire Google Maps
           </a>
+
+          {/* Blacklist toggle */}
+          {onToggleBlacklist && (
+            <button
+              onClick={() => onToggleBlacklist(station._coords.lat, station._coords.lng)}
+              className={`flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+                blacklisted
+                  ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                  : "bg-amber-50 text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100"
+              }`}
+            >
+              {blacklisted ? (
+                <>
+                  <ShieldCheck className="h-4 w-4" />
+                  Retirer le signalement
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="h-4 w-4" />
+                  Signaler un prix périmé
+                </>
+              )}
+            </button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

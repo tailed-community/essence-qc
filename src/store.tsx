@@ -18,7 +18,7 @@ import type {
   GeolocationStatus,
 } from "@/types";
 import { fetchStations } from "@/lib/data";
-import { loadPrefs, savePrefs } from "@/lib/preferences";
+import { loadPrefs, savePrefs, loadBlacklist, saveBlacklist, stationKey } from "@/lib/preferences";
 import {
   haversine,
   getStationPrice,
@@ -28,6 +28,8 @@ import {
 import { MONTREAL } from "@/lib/maps-config";
 
 const MAX_NEARBY = 200;
+const REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const STALE_THRESHOLD_MS = 10 * 60 * 1000;  // 10 minutes
 
 interface AppState {
   stations: StationFeature[];
@@ -44,6 +46,7 @@ interface AppState {
   loadingText: string;
   error: string | null;
   geolocationStatus: GeolocationStatus;
+  lastRefreshed: Date | null;
   setPrefs: (prefs: Partial<UserPreferences>) => void;
   setView: (view: ViewMode) => void;
   setSortMode: (mode: SortMode) => void;
@@ -53,6 +56,9 @@ interface AppState {
   retryGeolocation: () => void;
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  blacklist: Set<string>;
+  toggleBlacklist: (lat: number, lng: number) => void;
+  isBlacklisted: (lat: number, lng: number) => boolean;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -75,7 +81,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [geolocationStatus, setGeolocationStatus] =
     useState<GeolocationStatus>("pending");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [blacklist, setBlacklist] = useState<Set<string>>(() => loadBlacklist());
   const watchIdRef = useRef<number | null>(null);
+  const lastFetchedAtRef = useRef<number>(0);
 
   const effectiveLocation = useMemo(
     () => userLocation ?? prefs.homeLocation ?? MONTREAL,
@@ -107,6 +116,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const clearHomeLocation = useCallback(() => {
     setPrefs({ homeLocation: undefined, homeAddress: undefined });
   }, [setPrefs]);
+
+  const toggleBlacklist = useCallback((lat: number, lng: number) => {
+    setBlacklist((prev) => {
+      const next = new Set(prev);
+      const key = stationKey(lat, lng);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      saveBlacklist(next);
+      return next;
+    });
+  }, []);
+
+  const isBlacklisted = useCallback(
+    (lat: number, lng: number) => blacklist.has(stationKey(lat, lng)),
+    [blacklist]
+  );
 
   // Start geolocation tracking
   const startGeolocation = useCallback(() => {
@@ -178,6 +206,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [startGeolocation]);
 
+  // Silently refresh station data if stale
+  const refreshStations = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastFetchedAtRef.current < STALE_THRESHOLD_MS) return;
+
+    try {
+      const data = await fetchStations();
+      lastFetchedAtRef.current = Date.now();
+      setStations(data);
+      setLastRefreshed(new Date());
+    } catch {
+      // Silent fail for background refresh — keep existing data
+    }
+  }, []);
+
   // Init: fetch data (don't block on geolocation)
   useEffect(() => {
     let cancelled = false;
@@ -190,6 +233,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         if (cancelled) return;
         setStations(data);
+        lastFetchedAtRef.current = Date.now();
+        setLastRefreshed(new Date());
         setLoading(false);
       } catch (err) {
         if (!cancelled) {
@@ -202,6 +247,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Start both in parallel — don't await geolocation
     init();
     startGeolocation();
+
+    // Interval-based refresh (every 15 min)
+    const intervalId = setInterval(refreshStations, REFRESH_INTERVAL_MS);
+
+    // Visibility-based refresh (tab/app becomes visible)
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        refreshStations();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
 
     // Listen for permission changes (user enables location from browser/OS settings)
     if (navigator.permissions) {
@@ -219,19 +275,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibility);
       if (watchIdRef.current != null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
     };
-  }, [startGeolocation]);
+  }, [startGeolocation, refreshStations]);
 
   // Compute nearby stations
   const { nearby, allEnriched, avgPrice, costcoStations } = computeNearby(
     stations,
     effectiveLocation,
     prefs,
-    sortMode
+    sortMode,
+    blacklist
   );
 
   return (
@@ -251,6 +310,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         loadingText,
         error,
         geolocationStatus,
+        lastRefreshed,
         setPrefs,
         setView,
         setSortMode,
@@ -260,6 +320,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         retryGeolocation,
         settingsOpen,
         setSettingsOpen,
+        blacklist,
+        toggleBlacklist,
+        isBlacklisted,
       }}
     >
       {children}
@@ -271,7 +334,8 @@ function computeNearby(
   stations: StationFeature[],
   location: LatLng,
   prefs: UserPreferences,
-  sortMode: SortMode
+  sortMode: SortMode,
+  blacklist: Set<string>
 ): {
   nearby: EnrichedStation[];
   allEnriched: EnrichedStation[];
@@ -297,22 +361,31 @@ function computeNearby(
       s._coords.lng
     );
 
+    const isBlacklisted = blacklist.has(stationKey(s._coords.lat, s._coords.lng));
+
     enriched.push({
       ...s,
       _price: price,
       _distance: dist,
       _colorClass: "mid",
+      _blacklisted: isBlacklisted,
     });
-    totalPrice += price;
-    priceCount++;
+
+    // Exclude blacklisted stations from average price calculation
+    if (!isBlacklisted) {
+      totalPrice += price;
+      priceCount++;
+    }
   }
 
   const avg = priceCount > 0 ? totalPrice / priceCount : null;
 
-  // Calculate color classes
-  const prices = enriched.map((s) => s._price!);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
+  // Calculate color classes — exclude blacklisted from min/max
+  const nonBlacklistedPrices = enriched
+    .filter((s) => !s._blacklisted && s._price != null)
+    .map((s) => s._price!);
+  const minP = nonBlacklistedPrices.length > 0 ? Math.min(...nonBlacklistedPrices) : 0;
+  const maxP = nonBlacklistedPrices.length > 0 ? Math.max(...nonBlacklistedPrices) : 0;
   for (const s of enriched) {
     s._colorClass = priceColorClass(s._price, minP, maxP);
   }

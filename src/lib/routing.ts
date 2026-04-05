@@ -93,7 +93,7 @@ export function findStationsAlongRoute(
   maxDistFromRoute = 2,
   routeMeta: { distance: number; duration: number } | null = null,
   autonomyKm: number | null = null,
-  segmentKm = 25,
+  _segmentKm?: number,
   topPerSegment = 3
 ): RouteStation[] {
   const sampleRate = Math.max(1, Math.floor(routeCoords.length / 300));
@@ -109,6 +109,10 @@ export function findStationsAlongRoute(
     ? routeMeta.distance / 1000
     : cumDists.at(-1)!;
   const minPerKm = routeDurationMin ? routeDurationMin / routeDistKm : null;
+
+  // Dynamic segment count: log-scale so short trips get few segments, long trips get more
+  const numSegments = Math.min(8, Math.max(3, Math.round(3 + Math.log2(routeDistKm / 10))));
+  const segmentKm = Math.max(5, routeDistKm / numSegments);
 
   // Dynamic max detour distance based on route length
   const effectiveMaxDist = Math.min(maxDistFromRoute, Math.max(3, routeDistKm * 0.02));
