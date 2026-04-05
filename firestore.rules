@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Reports: no direct client access — only Cloud Functions write via Admin SDK
+    match /reports/{reportId} {
+      allow read, write: if false;
+    }
+
+    // Report counts: public read so the frontend can display community data
+    match /reportCounts/{stationKey} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Mail: used by Trigger Email extension only
+    match /mail/{mailId} {
+      allow read, write: if false;
+    }
+  }
+}
